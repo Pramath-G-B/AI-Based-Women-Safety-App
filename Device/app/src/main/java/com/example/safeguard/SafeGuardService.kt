@@ -1,17 +1,21 @@
 package com.example.safeguard
 
+import android.Manifest
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
 import com.google.firebase.firestore.FirebaseFirestore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
@@ -28,6 +32,10 @@ class SafeGuardService : Service() {
     private lateinit var impactDetector: ImpactDetector
     private lateinit var audioDetector: AudioDistressDetector
 
+    private var autoAlertJob: Job? = null
+    private var autoAlertSent = false
+    private var monitoringStarted = false
+
     override fun onCreate() {
         super.onCreate()
 
@@ -43,14 +51,15 @@ class SafeGuardService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (monitoringStarted) return START_STICKY
+        monitoringStarted = true
+
         scope.launch {
             while (true) {
                 val location = getLocation()
 
                 if (location != null) {
-                    val currentHour = Calendar.getInstance()
-                        .get(Calendar.HOUR_OF_DAY)
-
+                    val currentHour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
                     val placeTypes = listOf("bar", "night_club")
 
                     val sensorInput = SensorInput(
@@ -77,31 +86,82 @@ class SafeGuardService : Service() {
                         )
                     )
 
-                    if (evaluation.shouldTrigger) {
-                        val payload = hashMapOf(
-                            "lat" to sensorInput.latitude,
-                            "lng" to sensorInput.longitude,
-                            "riskScore" to evaluation.riskScore,
-                            "triggerType" to evaluation.triggerType,
-                            "mode" to evaluation.mode.name,
-                            "timestamp" to sensorInput.timestamp,
-                            "audioLevel" to sensorInput.audioLevel,
-                            "impactLevel" to sensorInput.impactLevel
-                        )
+                    // Start popup/countdown only once.
+                    if (evaluation.shouldTrigger && autoAlertJob == null && !autoAlertSent) {
+                        val initialTriggerType = evaluation.triggerType
 
-                        try {
-                            FirebaseFirestore.getInstance()
-                                .collection("alerts")
-                                .add(payload)
-                                .await()
-                            println("✅ Alert sent to Firebase")
-                        } catch (e: Exception) {
-                            println("❌ Failed to send alert: ${e.message}")
+                        autoAlertJob = scope.launch {
+                            try {
+                                AutoAlertState.show(initialTriggerType, 5)
+
+                                for (sec in 5 downTo 1) {
+                                    AutoAlertState.updateSeconds(sec)
+
+                                    if (AutoAlertState.state.value.cancelRequested) {
+                                        println("❌ Auto alert cancelled by user")
+                                        return@launch
+                                    }
+
+                                    delay(1000)
+                                }
+
+                                val latestLocation = getLocation()
+                                if (latestLocation == null) {
+                                    println("❌ Could not get location for alert")
+                                    return@launch
+                                }
+
+                                val latestInput = SensorInput(
+                                    audioLevel = audioDetector.audioLevel,
+                                    impactLevel = impactDetector.impactLevel,
+                                    latitude = latestLocation.first,
+                                    longitude = latestLocation.second,
+                                    hour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY),
+                                    timestamp = System.currentTimeMillis()
+                                )
+
+                                val latestEval = processor.evaluate(latestInput, placeTypes)
+
+                                val payload = hashMapOf(
+                                    "lat" to latestInput.latitude,
+                                    "lng" to latestInput.longitude,
+                                    "riskScore" to latestEval.riskScore,
+                                    "triggerType" to if (latestEval.triggerType.isNotBlank()) {
+                                        latestEval.triggerType
+                                    } else {
+                                        initialTriggerType
+                                    },
+                                    "mode" to latestEval.mode.name,
+                                    "timestamp" to latestInput.timestamp,
+                                    "audioLevel" to latestInput.audioLevel,
+                                    "impactLevel" to latestInput.impactLevel
+                                )
+
+                                try {
+                                    FirebaseFirestore.getInstance()
+                                        .collection("alerts")
+                                        .add(payload)
+                                        .await()
+
+                                    println("🔥 ALERT SENT to Firebase")
+                                    autoAlertSent = true
+                                } catch (ex: Exception) {
+                                    println("❌ Failed to send alert: ${ex.message}")
+                                }
+                            } finally {
+                                AutoAlertState.hide()
+                                autoAlertJob = null
+                            }
                         }
+                    }
+
+                    // Reset only when system is safe and no popup is running.
+                    if (!evaluation.shouldTrigger && autoAlertJob == null) {
+                        autoAlertSent = false
                     }
                 }
 
-                delay(3000)
+                delay(1000)
             }
         }
 
@@ -110,6 +170,8 @@ class SafeGuardService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
+        autoAlertJob?.cancel()
+        AutoAlertState.hide()
         impactDetector.stop()
         audioDetector.stop()
         scope.cancel()
@@ -142,6 +204,20 @@ class SafeGuardService : Service() {
 
     private suspend fun getLocation(): Pair<Double, Double>? =
         withContext(Dispatchers.IO) {
+            val fineGranted = ContextCompat.checkSelfPermission(
+                this@SafeGuardService,
+                Manifest.permission.ACCESS_FINE_LOCATION
+            ) == PackageManager.PERMISSION_GRANTED
+
+            val coarseGranted = ContextCompat.checkSelfPermission(
+                this@SafeGuardService,
+                Manifest.permission.ACCESS_COARSE_LOCATION
+            ) == PackageManager.PERMISSION_GRANTED
+
+            if (!fineGranted && !coarseGranted) {
+                return@withContext null
+            }
+
             val client = LocationServices.getFusedLocationProviderClient(this@SafeGuardService)
 
             try {
@@ -151,9 +227,9 @@ class SafeGuardService : Service() {
                 ).await()
 
                 location?.let { Pair(it.latitude, it.longitude) }
-            } catch (e: SecurityException) {
+            } catch (_: SecurityException) {
                 null
-            } catch (e: Exception) {
+            } catch (_: Exception) {
                 null
             }
         }
