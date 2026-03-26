@@ -29,7 +29,7 @@ It runs silently in the background and triggers alerts when high-risk situations
    - Location data
    - (Future: audio + motion)
 3. Converts data into `SensorInput`
-4. (Upcoming) Risk Engine analyzes danger level
+4. Risk Engine analyzes danger level
 5. If high risk → alert is triggered and stored in Firebase
 
 ---
