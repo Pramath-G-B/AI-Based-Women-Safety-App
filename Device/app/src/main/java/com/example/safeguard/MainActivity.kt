@@ -11,6 +11,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
@@ -18,6 +19,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.example.safeguard.ui.theme.SafeGuardTheme
+import kotlinx.coroutines.delay
 
 class MainActivity : ComponentActivity() {
 
@@ -45,6 +47,30 @@ class MainActivity : ComponentActivity() {
         setContent {
             SafeGuardTheme {
                 val liveState by MonitorState.state.collectAsState()
+                val sosState by SosState.state.collectAsState()
+
+                LaunchedEffect(sosState.isPending) {
+                    if (sosState.isPending) {
+                        for (i in 5 downTo 1) {
+                            if (!SosState.state.value.isPending) return@LaunchedEffect
+                            SosState.updateSeconds(i)
+                            delay(1000)
+                        }
+
+                        if (SosState.state.value.isPending) {
+                            FirebaseAlertHelper.sendManualSosAlert(
+                                lat = liveState.lat,
+                                lng = liveState.lng,
+                                onSuccess = {
+                                    SosState.clear()
+                                },
+                                onFailure = {
+                                    SosState.clear()
+                                }
+                            )
+                        }
+                    }
+                }
 
                 val resultText =
                     "🎤 Audio: ${liveState.audioLevel}\n" +
@@ -89,10 +115,54 @@ class MainActivity : ComponentActivity() {
                             style = MaterialTheme.typography.bodyMedium
                         )
 
-                        Spacer(modifier = Modifier.height(32.dp))
+                        Spacer(modifier = Modifier.height(24.dp))
 
-                        Button(onClick = { }) {
+                        Button(
+                            onClick = {
+                                if (!sosState.isPending) {
+                                    SosState.start(
+                                        phoneNumber = "1234567890",
+                                        message = "Manual SOS triggered"
+                                    )
+                                }
+                            }
+                        ) {
                             Text("SOS")
+                        }
+
+                        Spacer(modifier = Modifier.height(24.dp))
+
+                        if (sosState.isPending) {
+                            Card(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(16.dp),
+                                elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
+                            ) {
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(16.dp),
+                                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                                ) {
+                                    Text(
+                                        text = "Emergency SMS will be sent in ${sosState.secondsLeft} seconds",
+                                        style = MaterialTheme.typography.titleMedium
+                                    )
+
+                                    Text(
+                                        text = "Tap cancel to stop it.",
+                                        style = MaterialTheme.typography.bodyMedium
+                                    )
+
+                                    Button(
+                                        onClick = { SosState.cancel() },
+                                        modifier = Modifier.align(Alignment.End)
+                                    ) {
+                                        Text("Cancel")
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -101,7 +171,8 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun checkLocationPermissionAndProceed() {
-        if (ContextCompat.checkSelfPermission(
+        if (
+            ContextCompat.checkSelfPermission(
                 this,
                 Manifest.permission.ACCESS_FINE_LOCATION
             ) != PackageManager.PERMISSION_GRANTED
@@ -113,7 +184,8 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun checkAudioPermissionAndProceed() {
-        if (ContextCompat.checkSelfPermission(
+        if (
+            ContextCompat.checkSelfPermission(
                 this,
                 Manifest.permission.RECORD_AUDIO
             ) != PackageManager.PERMISSION_GRANTED
@@ -126,7 +198,8 @@ class MainActivity : ComponentActivity() {
 
     private fun checkNotificationPermissionAndStart() {
         if (Build.VERSION.SDK_INT >= 33) {
-            if (ContextCompat.checkSelfPermission(
+            if (
+                ContextCompat.checkSelfPermission(
                     this,
                     Manifest.permission.POST_NOTIFICATIONS
                 ) != PackageManager.PERMISSION_GRANTED
