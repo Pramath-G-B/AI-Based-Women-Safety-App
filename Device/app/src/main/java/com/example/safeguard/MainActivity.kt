@@ -45,6 +45,8 @@ class MainActivity : ComponentActivity() {
         checkLocationPermissionAndProceed()
 
         setContent {
+            val userId = UserSessionManager.getUserId(this)
+
             SafeGuardTheme {
                 val liveState by MonitorState.state.collectAsState()
                 val sosState by SosState.state.collectAsState()
@@ -59,6 +61,7 @@ class MainActivity : ComponentActivity() {
 
                         if (SosState.state.value.isPending) {
                             FirebaseAlertHelper.sendManualSosAlert(
+                                context = this@MainActivity,
                                 lat = liveState.lat,
                                 lng = liveState.lng,
                                 onSuccess = {
@@ -106,6 +109,13 @@ class MainActivity : ComponentActivity() {
                         Text(
                             text = "System Active",
                             style = MaterialTheme.typography.bodyLarge
+                        )
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        Text(
+                            text = "User ID: $userId",
+                            style = MaterialTheme.typography.bodySmall
                         )
 
                         Spacer(modifier = Modifier.height(16.dp))
