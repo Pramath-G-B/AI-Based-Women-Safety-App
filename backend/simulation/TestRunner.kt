@@ -61,7 +61,9 @@ if (trigger) {
         lng = 77.5946,
         riskScore = risk,
         triggerType = triggerType,
-        timestamp = System.currentTimeMillis()
+        timestamp = System.currentTimeMillis(),
+        mode = mode.name,
+
     )
 
     val payload = FirebaseService.prepareAlertPayload(alert)

@@ -1,6 +1,6 @@
-package models
+package com.example.safeguard
 
-data class Alert(
+data class AlertData(
     val lat: Double,
     val lng: Double,
     val riskScore: Int,

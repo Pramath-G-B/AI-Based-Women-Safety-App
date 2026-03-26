@@ -10,7 +10,7 @@ object FirebaseService {
             "lng" to alert.lng,
             "riskScore" to alert.riskScore,
             "triggerType" to alert.triggerType,
-            "timestamp" to alert.timestamp
+            "timestamp" to alert.timestamp,
             "mode" to alert.mode
         )
     }
