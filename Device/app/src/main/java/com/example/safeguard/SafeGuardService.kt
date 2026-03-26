@@ -33,8 +33,14 @@ class SafeGuardService : Service() {
     private lateinit var audioDetector: AudioDistressDetector
 
     private var autoAlertJob: Job? = null
-    private var autoAlertSent = false
     private var monitoringStarted = false
+
+    private var autoAlertSent = false
+    private var lastAutoAlertTime = 0L
+
+    companion object {
+        private const val AUTO_ALERT_COOLDOWN_MS = 30_000L
+    }
 
     override fun onCreate() {
         super.onCreate()
@@ -86,9 +92,15 @@ class SafeGuardService : Service() {
                         )
                     )
 
-                    // Start popup/countdown only once.
-                    if (evaluation.shouldTrigger && autoAlertJob == null && !autoAlertSent) {
-                        val initialTriggerType = evaluation.triggerType
+                    val now = System.currentTimeMillis()
+                    val inCooldown = (now - lastAutoAlertTime) < AUTO_ALERT_COOLDOWN_MS
+
+                    if (evaluation.shouldTrigger && autoAlertJob == null && !inCooldown && !autoAlertSent) {
+                        val initialTriggerType = resolveTriggerType(
+                            rawTriggerType = evaluation.triggerType,
+                            audioLevel = sensorInput.audioLevel,
+                            impactLevel = sensorInput.impactLevel
+                        )
 
                         autoAlertJob = scope.launch {
                             try {
@@ -122,15 +134,21 @@ class SafeGuardService : Service() {
 
                                 val latestEval = processor.evaluate(latestInput, placeTypes)
 
+                                val finalTriggerType = resolveTriggerType(
+                                    rawTriggerType = latestEval.triggerType,
+                                    audioLevel = latestInput.audioLevel,
+                                    impactLevel = latestInput.impactLevel,
+                                    fallback = initialTriggerType
+                                )
+
+                                val userId = UserSessionManager.getUserId(this@SafeGuardService)
+
                                 val payload = hashMapOf(
+                                    "userId" to userId,
                                     "lat" to latestInput.latitude,
                                     "lng" to latestInput.longitude,
                                     "riskScore" to latestEval.riskScore,
-                                    "triggerType" to if (latestEval.triggerType.isNotBlank()) {
-                                        latestEval.triggerType
-                                    } else {
-                                        initialTriggerType
-                                    },
+                                    "triggerType" to finalTriggerType,
                                     "mode" to latestEval.mode.name,
                                     "timestamp" to latestInput.timestamp,
                                     "audioLevel" to latestInput.audioLevel,
@@ -145,6 +163,7 @@ class SafeGuardService : Service() {
 
                                     println("🔥 ALERT SENT to Firebase")
                                     autoAlertSent = true
+                                    lastAutoAlertTime = System.currentTimeMillis()
                                 } catch (ex: Exception) {
                                     println("❌ Failed to send alert: ${ex.message}")
                                 }
@@ -155,7 +174,6 @@ class SafeGuardService : Service() {
                         }
                     }
 
-                    // Reset only when system is safe and no popup is running.
                     if (!evaluation.shouldTrigger && autoAlertJob == null) {
                         autoAlertSent = false
                     }
@@ -178,6 +196,27 @@ class SafeGuardService : Service() {
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
+
+    private fun resolveTriggerType(
+        rawTriggerType: String?,
+        audioLevel: Int,
+        impactLevel: Int,
+        fallback: String? = null
+    ): String {
+        val cleaned = rawTriggerType?.trim()?.uppercase()
+
+        if (!cleaned.isNullOrBlank() && cleaned != "UNKNOWN" && cleaned != "NONE") {
+            return cleaned
+        }
+
+        return when {
+            audioLevel > 0 && impactLevel > 0 -> "AUDIO_IMPACT"
+            impactLevel > 0 -> "IMPACT"
+            audioLevel > 0 -> "AUDIO"
+            !fallback.isNullOrBlank() -> fallback
+            else -> "AUTO"
+        }
+    }
 
     private fun startMyForegroundNotification() {
         val channelId = "safeguard_channel"
