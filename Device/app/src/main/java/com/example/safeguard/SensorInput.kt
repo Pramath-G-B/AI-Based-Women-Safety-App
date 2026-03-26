@@ -1,4 +1,4 @@
-package models
+package com.example.safeguard
 
 data class SensorInput(
     val distressAudio: Boolean,
