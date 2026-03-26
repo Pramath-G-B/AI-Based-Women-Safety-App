@@ -9,66 +9,97 @@ import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
-import kotlinx.coroutines.*
-import java.util.*
-import kotlinx.coroutines.tasks.await
 import com.google.firebase.firestore.FirebaseFirestore
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.withContext
+import java.util.Calendar
 
 class SafeGuardService : Service() {
 
-    private val scope = CoroutineScope(Dispatchers.Default)
+    private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
+
     private lateinit var processor: SafetyProcessor
+    private lateinit var impactDetector: ImpactDetector
+    private lateinit var audioDetector: AudioDistressDetector
 
     override fun onCreate() {
         super.onCreate()
+
         processor = SafetyProcessor()
-        startForegroundService()
+
+        impactDetector = ImpactDetector(this)
+        impactDetector.start()
+
+        audioDetector = AudioDistressDetector()
+        audioDetector.start()
+
+        startMyForegroundNotification()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        println("SafeGuard Started")
         scope.launch {
             while (true) {
-
                 val location = getLocation()
 
                 if (location != null) {
-
                     val currentHour = Calendar.getInstance()
                         .get(Calendar.HOUR_OF_DAY)
 
+                    val placeTypes = listOf("bar", "night_club")
+
                     val sensorInput = SensorInput(
-                        distressAudio = false,
-                        impactDetected = false,
+                        audioLevel = audioDetector.audioLevel,
+                        impactLevel = impactDetector.impactLevel,
                         latitude = location.first,
                         longitude = location.second,
                         hour = currentHour,
                         timestamp = System.currentTimeMillis()
                     )
 
-                    val alert = processor.process(sensorInput, emptyList())
+                    val evaluation = processor.evaluate(sensorInput, placeTypes)
 
-                    if (alert != null) {
+                    MonitorState.update(
+                        LiveMonitorData(
+                            audioLevel = sensorInput.audioLevel,
+                            impactLevel = sensorInput.impactLevel,
+                            risk = evaluation.riskScore,
+                            mode = evaluation.mode.name,
+                            trigger = evaluation.shouldTrigger,
+                            triggerType = evaluation.triggerType,
+                            lat = sensorInput.latitude,
+                            lng = sensorInput.longitude
+                        )
+                    )
 
+                    if (evaluation.shouldTrigger) {
                         val payload = hashMapOf(
-                            "lat" to alert.lat,
-                            "lng" to alert.lng,
-                            "riskScore" to alert.riskScore,
-                            "triggerType" to alert.triggerType,
-                            "mode" to alert.mode,
-                            "timestamp" to alert.timestamp
+                            "lat" to sensorInput.latitude,
+                            "lng" to sensorInput.longitude,
+                            "riskScore" to evaluation.riskScore,
+                            "triggerType" to evaluation.triggerType,
+                            "mode" to evaluation.mode.name,
+                            "timestamp" to sensorInput.timestamp,
+                            "audioLevel" to sensorInput.audioLevel,
+                            "impactLevel" to sensorInput.impactLevel
                         )
 
-                        FirebaseFirestore.getInstance()
-                            .collection("alerts")
-                            .add(payload)
-                            .addOnSuccessListener {
-                                println("✅ Alert sent to Firebase")
-                            }
-                            .addOnFailureListener {
-                                println("❌ Failed to send alert")
-                            }
-                    }                }
+                        try {
+                            FirebaseFirestore.getInstance()
+                                .collection("alerts")
+                                .add(payload)
+                                .await()
+                            println("✅ Alert sent to Firebase")
+                        } catch (e: Exception) {
+                            println("❌ Failed to send alert: ${e.message}")
+                        }
+                    }
+                }
 
                 delay(3000)
             }
@@ -77,10 +108,16 @@ class SafeGuardService : Service() {
         return START_STICKY
     }
 
+    override fun onDestroy() {
+        super.onDestroy()
+        impactDetector.stop()
+        audioDetector.stop()
+        scope.cancel()
+    }
+
     override fun onBind(intent: Intent?): IBinder? = null
 
-    // 🔹 Foreground notification
-    private fun startForegroundService() {
+    private fun startMyForegroundNotification() {
         val channelId = "safeguard_channel"
 
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
@@ -102,7 +139,7 @@ class SafeGuardService : Service() {
 
         startForeground(1, notification)
     }
-    // 🔹 Get location
+
     private suspend fun getLocation(): Pair<Double, Double>? =
         withContext(Dispatchers.IO) {
             val client = LocationServices.getFusedLocationProviderClient(this@SafeGuardService)
@@ -114,7 +151,6 @@ class SafeGuardService : Service() {
                 ).await()
 
                 location?.let { Pair(it.latitude, it.longitude) }
-
             } catch (e: SecurityException) {
                 null
             } catch (e: Exception) {

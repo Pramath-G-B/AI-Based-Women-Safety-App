@@ -1,8 +1,8 @@
 package com.example.safeguard
 
 data class SensorInput(
-    val distressAudio: Boolean,
-    val impactDetected: Boolean,
+    val audioLevel: Int,
+    val impactLevel: Int,
     val latitude: Double,
     val longitude: Double,
     val hour: Int,
