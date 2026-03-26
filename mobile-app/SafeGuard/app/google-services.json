@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "492250547241",
+    "project_id": "ai-based-women-safety-app",
+    "storage_bucket": "ai-based-women-safety-app.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:492250547241:android:5d53392febb9d7e0264838",
+        "android_client_info": {
+          "package_name": "com.safeguard.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDIWsWVqLUxx6gvfSkmF-ds1u1G8wQrpHI"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
