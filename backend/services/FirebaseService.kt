@@ -2,10 +2,16 @@ package services
 
 import models.Alert
 
-class FirebaseService {
+object FirebaseService {
 
-    fun sendAlert(alert: Alert) {
-        println("Sending alert to Firebase:")
-        println(alert)
+    fun prepareAlertPayload(alert: Alert): Map<String, Any> {
+        return mapOf(
+            "lat" to alert.lat,
+            "lng" to alert.lng,
+            "riskScore" to alert.riskScore,
+            "triggerType" to alert.triggerType,
+            "timestamp" to alert.timestamp
+            "mode" to alert.mode
+        )
     }
 }

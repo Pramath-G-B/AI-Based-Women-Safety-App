@@ -4,6 +4,9 @@ import core.AlertManager
 import core.ModeManager
 import core.RiskEngine
 import models.SensorInput
+import models.Alert
+import services.LocationRiskService
+import services.FirebaseService
 
 fun main() {
 
@@ -11,34 +14,60 @@ fun main() {
     val alertManager = AlertManager()
 
     val scenarios = listOf(
-        SensorInput(false, false, 10, 14),  // safe
-        SensorInput(true, false, 20, 22),   // audio
-        SensorInput(false, true, 20, 2),    // impact at night
-        SensorInput(true, true, 30, 1)      // dangerous
+        Triple(false, false, listOf("hospital")),       // safe area
+        Triple(true, false, listOf("restaurant")),      // normal place
+        Triple(false, true, listOf("bus_station")),     // crowded/public
+        Triple(true, true, listOf("night_club"))        // high-risk area
     )
 
-    for (input in scenarios) {
+    for ((audio, impact, placeTypes) in scenarios) {
 
-        val risk = engine.compute(
-            input.distressAudio,
-            input.impactDetected,
-            input.locationRisk,
-            input.hour
-        )
+    val locationRisk = LocationRiskService.getRisk(placeTypes)
 
-        val mode = ModeManager.getMode(risk)
+    val hour = if (placeTypes.contains("night_club")) 1 else 14
 
-        val trigger = alertManager.shouldTrigger(
-            risk,
-            mode,
-            input.distressAudio,
-            input.impactDetected
-        )
+    val risk = engine.compute(
+        audio,
+        impact,
+        locationRisk,
+        hour
+    )
 
-        println("----------")
-        println("Input: $input")
-        println("Risk: $risk")
-        println("Mode: $mode")
-        println("Trigger: $trigger")
+    val mode = ModeManager.getMode(risk)
+
+    val trigger = alertManager.shouldTrigger(
+        risk,
+        mode,
+        audio,
+        impact
+    )
+
+if (trigger) {
+    val triggerType = alertManager.getTriggerType(audio, impact)
+    println("----------")
+    println("Place Types: $placeTypes")
+    println("Location Risk: $locationRisk")
+    println("Risk: $risk")
+    println("Mode: $mode")
+    println("Trigger: $trigger")
+    println("Trigger Type: $triggerType")
+}
+if (trigger) {
+
+    val triggerType = alertManager.getTriggerType(audio, impact)
+
+    val alert = Alert(
+        lat = 12.9716,
+        lng = 77.5946,
+        riskScore = risk,
+        triggerType = triggerType,
+        timestamp = System.currentTimeMillis()
+    )
+
+    val payload = FirebaseService.prepareAlertPayload(alert)
+
+    println("Sending to Firebase:")
+    println(payload)
+}
     }
 }

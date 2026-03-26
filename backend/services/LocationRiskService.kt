@@ -13,6 +13,6 @@ object LocationRiskService {
     )
 
     fun getRisk(placeTypes: List<String>): Int {
-        return placeTypes.map { riskMap[it] ?: 10 }.maxOrNull() ?: 10
+        return placeTypes.map { riskMap[it] ?: 15 }.maxOrNull() ?: 10
     }
 }

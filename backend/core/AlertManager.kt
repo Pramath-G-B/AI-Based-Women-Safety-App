@@ -37,4 +37,15 @@ class AlertManager {
 
         return trigger
     }
+    fun getTriggerType(
+    audio: Boolean,
+    impact: Boolean
+): String {
+    return when {
+        audio && impact -> "AUTO_BOTH"
+        audio -> "AUDIO"
+        impact -> "IMPACT"
+        else -> "UNKNOWN"
+    }
+}
 }
